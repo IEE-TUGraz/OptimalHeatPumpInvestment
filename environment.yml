@@ -1,0 +1,15 @@
+name: heatpump_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - gurobi::gurobi=13.0.0
+  - pandas
+  - openpyxl
+  - termcolor
+  - matplotlib=3.7.0
+  - pyyaml
+  - pyomo=6.9.2
+  - tsam
+prefix: C:\Users\Simon Malacek\anaconda3\envs\pyomo_gurobi

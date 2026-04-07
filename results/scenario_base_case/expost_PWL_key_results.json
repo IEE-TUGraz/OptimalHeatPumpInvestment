@@ -1,0 +1,15 @@
+{
+    "TotalCost": 465647.7910104151,
+    "HP_Investment_HP1": 335.2564491951698,
+    "HP_Investment_HP2": 165.80539144600894,
+    "Heat_Not_Supplied_Total": 1.5922796886133455,
+    "Excess_Heat_Supplied_Total": 0.0,
+    "SolveWork": 44.437194637304444,
+    "Iterations": 1,
+    "InvestmentCosts": 130831.83120414175,
+    "ElectricityCosts": 332786.742325735,
+    "HeatNotSuppliedCosts": 99.51748053833408,
+    "ExcessHeatCosts": 0.0,
+    "StartupCosts": 1929.6999999999996,
+    "TotalCost_ex_post": 465647.7910104151
+}

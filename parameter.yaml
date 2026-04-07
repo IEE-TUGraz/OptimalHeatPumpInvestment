@@ -1,0 +1,7 @@
+DeltaH: 0.25
+max_iterations: 20
+overlap_tolerance: 0.1
+solver_time_limit: 28800
+num_rep_periods: 8
+hours_per_period: 48
+constraint_binding_tolerance: 0.001
