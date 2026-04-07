@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Malacek"
+  given-names: "Simon"
+  orcid: "https://orcid.org/0009-0006-4943-7600"
+- family-names: "Werner"
+  given-names: "Yannick"
+  orcid: "https://orcid.org/0000-0002-6674-805X"
+title: "Optimal Heat Pump Investment Considering Part-Load Efficiency"
+version: 1.0.0
+date-released: 2026-04-07
+url: "https://github.com/IEE-TUGraz/OptimalHeatPumpInvestment"
