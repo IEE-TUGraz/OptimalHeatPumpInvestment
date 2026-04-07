@@ -48,13 +48,18 @@ profiles, electricity prices, and system configurations.
 
 ## Usage
 
-### 1. Clone Repository
+### 1. Clone or download Repository
 
-git clone `<repository_url>`{=html} cd `<repository_folder>`{=html}
+```bash
+git clone https://github.com/IEE-TUGraz/OptimalHeatPumpInvestment.git
+cd OptimalHeatPumpInvestment
+```
 
 ### 2. Create and Activate Environment
 
+```bash
 conda env create -f environment.yml conda activate heatpump_env
+```
 
 ### 3. Configure Parameters
 
