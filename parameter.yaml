@@ -2,6 +2,13 @@ DeltaH: 0.25
 max_iterations: 20
 overlap_tolerance: 0.1
 solver_time_limit: 28800
-num_rep_periods: 8
+num_rep_periods: 7
 hours_per_period: 48
 constraint_binding_tolerance: 0.001
+
+# Out-of-sample (OOS) ex-post analysis (full-resolution chronological re-dispatch of each fixed investment)
+run_oos_analysis: true      # master switch: set to false to skip the OOS step entirely
+oos_chunk_steps: 672        # committed steps per rolling-horizon chunk (672 = 1 week at 15-min resolution)
+oos_overlap_steps: 96       # look-ahead steps solved but not committed (96 = 1 day)
+oos_mipgap: 0.0001          # solver MIP gap for the OOS operational model (Gurobi default; keep tight)
+oos_n_jobs: null            # parallel formulations; null -> auto (one process per formulation, capped at CPU count)
