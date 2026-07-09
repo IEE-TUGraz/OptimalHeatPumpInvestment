@@ -1,9 +1,9 @@
 {
-    "TotalCost": 468657.9139845701,
-    "HP_Investment_HP1": 339.9760731506585,
-    "HP_Investment_HP2": 162.29423315783976,
+    "TotalCost": 479298.3201992231,
+    "HP_Investment_HP1": 359.54333321844547,
+    "HP_Investment_HP2": 265.36684222480466,
     "Heat_Not_Supplied_Total": 0.0,
     "Excess_Heat_Supplied_Total": 0.0,
-    "SolveWork": 363.4505619106865,
+    "SolveWork": 220.3631697467066,
     "Iterations": 1
 }
