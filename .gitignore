@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Solver / run logs ---
+*.log
+gurobi.log
+
+# --- Scratch & throwaway test scripts (iteration-only, not for the public repo) ---
+# Convention: prefix any ad-hoc smoke/benchmark/test script with an underscore.
+_*.py
+scratch_*
+tmp_*
+
+# --- Intermediate / backup result artifacts ---
+*_old.xlsx
+*_old.csv
+
+# --- Result outputs (ignored for now; regenerated on the workstation) ---
+results/
+results_no_rescale/
