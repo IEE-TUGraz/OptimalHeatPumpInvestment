@@ -119,6 +119,26 @@ def add_storage_formulation(model):
 
 
 
+def enforce_firm_design_supply(model, design_prefix="rp_design"):
+    """
+    Firm supply on the design/extreme representative period(s): forbid heat-not-supplied there so
+    the sizing must invest enough capacity to meet the storage-aware capacity-binding block, instead
+    of economically shedding it (which a low HNS penalty at weight 1 would otherwise allow).
+
+    Design periods are identified by their rp-label convention (see TimeSeriesAggregation, default
+    'rp_design'; the verification loop would add 'rp_design2', ... which this prefix also covers).
+    HNS is fixed to 0 (keeps model size down); its variable, bounds and penalty stay unchanged on all
+    normal periods, so sub-min-part-load shoulder loads are still curtailed there as before.
+    """
+    design_periods = [rp for rp in model.rp if str(rp).startswith(design_prefix)]
+    for rp in design_periods:
+        for h in model.h:
+            model.heat_not_supplied[rp, h].fix(0.0)
+    if design_periods:
+        print(f"[model] firm supply enforced (HNS=0) on design periods: {design_periods}")
+    return design_periods
+
+
 def add_investment_formulation(model):
     def max_invest_rule(m, rp, h, hps):
         return m.p_el[rp, h, hps] <= m.hp_invest[hps]
@@ -266,7 +286,7 @@ def save_results(parameter, name_prefix: str, df_results, key_results):
 def perform_simple_solve(model, parameter, global_param):
     solver = pyo.SolverFactory('gurobi_persistent')
     solver.set_instance(model)
-    solver.options["MIPGap"] = 0.01
+    solver.options["MIPGap"] = 1e-4  # ex-post is the validation reference -> keep tight (Gurobi default), not the 1% used for investment
     #solver.options["TimeLimit"] = global_param["solver_time_limit"]
     results = solver.solve(model, tee=False, warmstart=True)
     solve_work = solver._solver_model.Work

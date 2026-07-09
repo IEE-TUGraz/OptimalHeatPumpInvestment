@@ -41,6 +41,9 @@ def solve_PWL_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp
     # add the storage formulation
     Core_model.add_storage_formulation(model)
 
+    # firm supply on design/extreme periods (HNS=0); penalized slack unchanged on normal periods
+    Core_model.enforce_firm_design_supply(model)
+
     # Heat Pump Constraints
     def uc_cop_constraint_rule(m, rp, h, hps):
         return m.q_heat[rp, h, hps] == sum((m.K[s] * m.p_elec_seg[rp, h, s, hps] + m.d_scaled_pos[rp, h, s, hps] - m.d_scaled_neg[rp, h,s, hps]) for s in m.s) * m.COP_Scalor[rp, h]

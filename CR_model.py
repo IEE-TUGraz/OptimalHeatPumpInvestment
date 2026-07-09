@@ -44,6 +44,9 @@ def solve_CR_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp_
     # add the storage formulation
     Core_model.add_storage_formulation(model)
 
+    # firm supply on design/extreme periods (HNS=0); penalized slack unchanged on normal periods
+    Core_model.enforce_firm_design_supply(model)
+
 
     # Heat Pump Constraints
     def uc_cop_constraint_rule(m, rp, h, hps):

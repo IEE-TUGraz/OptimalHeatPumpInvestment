@@ -28,6 +28,9 @@ def solve_LP_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rpW
     # --- Model ---
     Core_model.add_storage_formulation(model)
 
+    # firm supply on design/extreme periods (HNS=0); penalized slack unchanged on normal periods
+    Core_model.enforce_firm_design_supply(model)
+
 
     # Heat Pump Constraints
     def cop_constraint_rule(m, rp, h, hps):
