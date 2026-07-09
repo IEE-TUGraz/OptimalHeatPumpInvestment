@@ -820,7 +820,11 @@ def run_kpi_expost_analysis(scenario_index, scenario_parameter):
 
         expost_results = expost_model.solve_expost_model(scenario_parameter, df_heatdemand, df_price, df_cop_scalor, df_rp_weight, key_results, model)
 
-
+        # The KPI "SolveWork"/"Iterations" should report the INVESTMENT model's solve effort (what we
+        # compare across formulations), not the ex-post validation solve. solve_expost_model returns the
+        # ex-post solve work under these keys, so overwrite them with the investment model's values.
+        expost_results["SolveWork"] = key_results.get("SolveWork")
+        expost_results["Iterations"] = key_results.get("Iterations")
 
         rows.append({
             "scenario": scenario_index,
