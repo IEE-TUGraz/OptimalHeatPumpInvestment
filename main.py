@@ -1,6 +1,15 @@
+import os
 import pandas as pd
 import sys
 from termcolor import cprint
+
+
+def _flush_excel(df, path):
+    """Atomically write a roll-up DataFrame (temp file + os.replace) so a crash or
+    kill mid-write can never corrupt or truncate the existing results file."""
+    tmp = path + ".tmp.xlsx"
+    df.to_excel(tmp, index=False)
+    os.replace(tmp, path)
 
 import data
 import LP_model
@@ -119,6 +128,11 @@ if __name__ == "__main__":
         KPI_expost = expost_analysis.run_kpi_expost_analysis(scenario["ScenarioIndex"], scenario_params)
         all_KPI_results.append(KPI_expost)
 
+        # Flush the investment + in-sample roll-ups NOW, before the long/fragile OOS step, so an OOS
+        # failure (or an interrupted run) can never lose the aggregates that are already complete.
+        _flush_excel(scenario_results, "results/Scenario_Results.xlsx")
+        _flush_excel(pd.concat(all_KPI_results, ignore_index=True), "results/All_KPI_Results.xlsx")
+
         # out-of-sample ex-post: re-solve each formulation's fixed investment on the FULL-resolution
         # chronological series (rolling horizon, formulations run in parallel processes). Toggled/tuned
         # via parameter.yaml (run_oos_analysis, oos_chunk_steps, oos_overlap_steps, oos_mipgap, oos_n_jobs).
@@ -128,9 +142,11 @@ if __name__ == "__main__":
                 chunk_steps=global_params.get("oos_chunk_steps", 672),
                 overlap_steps=global_params.get("oos_overlap_steps", 96),
                 mipgap=global_params.get("oos_mipgap", 1e-4),
+                time_limit=global_params.get("oos_chunk_time_limit", 900),
                 n_jobs=global_params.get("oos_n_jobs", None),
             )
             all_OOS_KPI_results.append(OOS_KPI)
+            _flush_excel(pd.concat(all_OOS_KPI_results, ignore_index=True), "results/All_KPI_Results_OOS.xlsx")
 
         # plot all performance maps for the scenario
         expost_analysis.plot_all_performance_maps(scenario["ScenarioIndex"])
@@ -138,12 +154,10 @@ if __name__ == "__main__":
         # plot all time plots
         expost_analysis.plot_all_models(scenario["ScenarioIndex"], scenario_params["StorageCapacity"])
 
-    # save the scenario_results dataframe to an excel file
-    scenario_results.to_excel("results/Scenario_Results.xlsx", index=False)
-    final_df = pd.concat(all_KPI_results, ignore_index=True)
-    final_df.to_excel("results/All_KPI_Results.xlsx", index=False)
+    # final authoritative roll-up write (the per-scenario flushes above already keep these current)
+    _flush_excel(scenario_results, "results/Scenario_Results.xlsx")
+    _flush_excel(pd.concat(all_KPI_results, ignore_index=True), "results/All_KPI_Results.xlsx")
 
     # save the aggregated out-of-sample KPIs (only if the OOS step ran)
     if all_OOS_KPI_results:
-        oos_df = pd.concat(all_OOS_KPI_results, ignore_index=True)
-        oos_df.to_excel("results/All_KPI_Results_OOS.xlsx", index=False)
+        _flush_excel(pd.concat(all_OOS_KPI_results, ignore_index=True), "results/All_KPI_Results_OOS.xlsx")
