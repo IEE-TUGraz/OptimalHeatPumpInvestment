@@ -34,7 +34,7 @@ def solve_expost_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df
     model.d_scaled_pos = pyo.Var(model.rp, model.h, model.s, model.hps, within=pyo.NonNegativeReals)
     model.d_scaled_neg = pyo.Var(model.rp, model.h, model.s, model.hps, within=pyo.NonNegativeReals)
 
-    model.K = pyo.Param(model.s, initialize={'s1': 3.633, 's2': 3.704, 's3': 3.740, 's4': 3.68, 's5': 3.666, 's6': 3.68, 's7': 3.678, 's8': 3.664, 's9': 3.632})  # segment slope
+    model.K = pyo.Param(model.s, initialize={'s1': 3.633, 's2': 3.704, 's3': 3.748, 's4': 3.68, 's5': 3.666, 's6': 3.68, 's7': 3.678, 's8': 3.664, 's9': 3.632})  # segment slope (s3 corrected 3.740->3.748 to match datasheet secant)
     model.D_pos = pyo.Param(model.s, initialize={'s1': 0, 's2': 0, 's3': 0.0, 's4': 0, 's5': 0, 's6': 0, 's7': 0, 's8': 0, 's9': 0})
     model.D_neg = pyo.Param(model.s, initialize={'s1': 0.1118, 's2': 0.126, 's3': 0.1392, 's4': 0.112, 's5': 0.105, 's6': 0.1134, 's7': 0.112, 's8': 0.1008, 's9': 0.072})
     model.RMin = pyo.Param(model.s, initialize={'s1': 0.1, 's2': 0.2, 's3': 0.3, 's4': 0.4, 's5': 0.5, 's6': 0.6, 's7': 0.7, 's8': 0.8, 's9': 0.9})  # segment minimum PLR

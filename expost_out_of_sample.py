@@ -23,6 +23,7 @@ Investment stays fixed, so every chunk is a small, fast operational MILP.
 
 import os
 import json
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import pandas as pd
@@ -33,9 +34,19 @@ import Core_model
 import expost_analysis
 
 
+def _fmt_dur(seconds):
+    """Compact human-readable duration for progress lines."""
+    seconds = float(seconds)
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
 # 9-segment part-load COP breakpoints (identical to expost_model.solve_expost_model)
 _SEGMENTS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']
-_K = {'s1': 3.633, 's2': 3.704, 's3': 3.740, 's4': 3.68, 's5': 3.666,
+_K = {'s1': 3.633, 's2': 3.704, 's3': 3.748, 's4': 3.68, 's5': 3.666,  # s3 corrected 3.740->3.748 (datasheet secant)
       's6': 3.68, 's7': 3.678, 's8': 3.664, 's9': 3.632}
 _D_POS = {s: 0.0 for s in _SEGMENTS}
 _D_NEG = {'s1': 0.1118, 's2': 0.126, 's3': 0.1392, 's4': 0.112, 's5': 0.105,
@@ -76,6 +87,8 @@ def _solve_operational_chunk(
     keep_labels,
     mipgap=1e-4,  # Gurobi default; ex-post is the validation reference, keep it tight
     threads=None,
+    time_limit=900,  # per-chunk safety net (s): generous so it normally never bites, only kills a pathological chunk
+    chunk_label="",
 ):
     """
     Solve the operational 9-segment ex-post model for one chronological chunk.
@@ -201,19 +214,38 @@ def _solve_operational_chunk(
     _add_operational_objective(model, startup_on)
 
     # --- Solve ---
+    # A fresh persistent solver per chunk is disposed in the finally-block: without close()
+    # the Gurobi model/environment leaks across the hundreds of chunk solves per run and,
+    # with several formulations in parallel, steadily grows memory (a likely OOM culprit).
     solver = pyo.SolverFactory('gurobi_persistent')
-    solver.set_instance(model)
-    solver.options["MIPGap"] = mipgap
-    if threads is not None:
-        solver.options["Threads"] = threads  # cap cores per solve to avoid oversubscription when run in parallel
-    solver.solve(tee=False)
+    try:
+        solver.set_instance(model)
+        solver.options["MIPGap"] = mipgap
+        if threads is not None:
+            solver.options["Threads"] = threads  # cap cores per solve to avoid oversubscription when run in parallel
+        if time_limit is not None:
+            solver.options["TimeLimit"] = time_limit  # safety net so one pathological chunk can never hang the run
+        results = solver.solve(tee=False)
 
-    # --- Extract results for the committed (kept) part only ---
-    shares = _collect_shares(model, keep_labels, startup_on)
-    df_kept = _collect_timeseries(model, keep_labels)
-    final_storage, final_on_state = _handoff_state(model, keep_labels[-1])
+        if str(results.solver.termination_condition) == "maxTimeLimit":
+            try:
+                achieved_gap = solver._solver_model.MIPGap
+                gap_txt = f"{achieved_gap:.2%}"
+            except Exception:
+                gap_txt = "unknown"
+            print(f"    {chunk_label}WARNING: chunk hit the {time_limit}s TimeLimit; using incumbent "
+                  f"(gap {gap_txt} vs target {mipgap:.0e}). Raise oos_chunk_time_limit if this recurs.", flush=True)
 
-    return shares, df_kept, final_storage, final_on_state
+        # --- Extract results for the committed (kept) part only ---
+        shares = _collect_shares(model, keep_labels, startup_on)
+        df_kept = _collect_timeseries(model, keep_labels)
+        final_storage, final_on_state = _handoff_state(model, keep_labels[-1])
+        return shares, df_kept, final_storage, final_on_state
+    finally:
+        try:
+            solver.close()  # finally runs before the return above completes -> solver always disposed
+        except Exception:
+            pass
 
 
 def _add_linked_storage(model, initial_storage):
@@ -342,6 +374,8 @@ def solve_oos_full_series(
     initial_storage=0.0,
     mipgap=1e-4,  # Gurobi default; ex-post is the validation reference, keep it tight
     threads=None,
+    time_limit=900,
+    checkpoint_prefix=None,
     label="",
 ):
     """
@@ -350,6 +384,11 @@ def solve_oos_full_series(
 
     chunk_steps: committed steps per chunk (672 = 1 week at 15-min resolution).
     overlap_steps: additional look-ahead steps solved but not committed.
+
+    If `checkpoint_prefix` is given, the running state (next chunk, aggregates,
+    storage/on-state) and committed time series are streamed to disk after every
+    chunk, so an interrupted run resumes from the last completed chunk instead of
+    restarting from scratch. The checkpoint files are removed on completion.
 
     Returns (results_dict, df_timeseries).
     """
@@ -371,6 +410,23 @@ def solve_oos_full_series(
 
     start = 0
     n_chunks = 0
+    total_chunks = -(-n // chunk_steps)  # ceil
+
+    state_path = checkpoint_prefix + "_state.json" if checkpoint_prefix else None
+    ts_path = checkpoint_prefix + "_ts.csv" if checkpoint_prefix else None
+    if checkpoint_prefix and os.path.exists(state_path):
+        with open(state_path) as f:
+            st = json.load(f)
+        start, n_chunks, agg, storage, on_state = (
+            st["start"], st["n_chunks"], st["agg"], st["storage"], st["on_state"])
+        print(f"    {label}resuming from checkpoint at chunk {n_chunks + 1}/{total_chunks} "
+              f"(step {start}/{n}).", flush=True)
+    elif ts_path and os.path.exists(ts_path):
+        os.remove(ts_path)  # stale committed series with no state -> discard and start clean
+
+    session_start = time.time()
+    chunks_this_session = 0
+
     while start < n:
         keep_end = min(start + chunk_steps, n)
         solve_end = min(keep_end + overlap_steps, n)
@@ -381,20 +437,50 @@ def solve_oos_full_series(
 
         keep_labels = df_heat_demand_full.index[start:keep_end].tolist()
 
+        t0 = time.time()
         shares, df_kept, storage, on_state = _solve_operational_chunk(
             parameter, global_param, hd, ep, cop,
             investment, storage, on_state, keep_labels, mipgap=mipgap, threads=threads,
+            time_limit=time_limit, chunk_label=label,
         )
+        chunk_dt = time.time() - t0
 
         for k in agg:
             agg[k] += shares[k]
-        ts_parts.append(df_kept)
 
         n_chunks += 1
-        print(f"    {label}chunk {n_chunks}: steps [{start}:{keep_end}] "
-              f"(solved to {solve_end}), storage handoff {storage:.2f} kWh")
-
+        chunks_this_session += 1
+        chunk_start = start
         start = keep_end
+
+        if ts_path:
+            df_kept.to_csv(ts_path, mode="a", header=not os.path.exists(ts_path))
+        else:
+            ts_parts.append(df_kept)
+
+        op_cost = (agg["ElectricityCosts"] + agg["HeatNotSuppliedCosts"]
+                   + agg["ExcessHeatCosts"] + agg["StartupCosts"])
+        elapsed = time.time() - session_start
+        eta = (elapsed / chunks_this_session) * (total_chunks - n_chunks)
+        hns_flag = "" if shares["Heat_Not_Supplied_Total"] < 1e-6 else \
+            f" | !HNS {shares['Heat_Not_Supplied_Total']:.1f} kWh"
+        print(f"    {label}chunk {n_chunks}/{total_chunks} ({100 * n_chunks / total_chunks:4.1f}%) | "
+              f"steps {chunk_start}-{keep_end} in {_fmt_dur(chunk_dt)} | storage {storage:5.1f} kWh | "
+              f"op-cost so far {op_cost:,.0f} | elapsed {_fmt_dur(elapsed)} | ETA ~{_fmt_dur(eta)}"
+              f"{hns_flag}", flush=True)
+
+        if checkpoint_prefix:  # atomic state write so an interruption never leaves a half-written checkpoint
+            tmp = state_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"start": start, "n_chunks": n_chunks, "agg": agg,
+                           "storage": storage, "on_state": on_state}, f)
+            os.replace(tmp, state_path)
+
+    if ts_path and os.path.exists(ts_path):
+        df_timeseries = pd.read_csv(ts_path, index_col=0)
+        df_timeseries.index.name = "time_h"
+    else:
+        df_timeseries = pd.concat(ts_parts)
 
     # --- Investment cost: counted once over the whole horizon ---
     time_weight = parameter["DurationDays"] / 365.0
@@ -420,7 +506,11 @@ def solve_oos_full_series(
         "overlap_steps": overlap_steps,
     }
 
-    df_timeseries = pd.concat(ts_parts)
+    if checkpoint_prefix:  # completed cleanly -> drop the checkpoint so the next run starts fresh
+        for p in (state_path, ts_path):
+            if p and os.path.exists(p):
+                os.remove(p)
+
     return results_dict, df_timeseries
 
 
@@ -436,29 +526,49 @@ def _run_one_model(task):
     formulations run concurrently. Returns a KPI row dict (or None if skipped).
     """
     (model, scenario_index, scenario_params, df_hd_full, df_ep_full, df_cop_full,
-     out_dir, chunk_steps, overlap_steps, initial_storage, mipgap, threads, source_index) = task
+     out_dir, chunk_steps, overlap_steps, initial_storage, mipgap, threads, source_index,
+     time_limit) = task
+
+    # Resume across runs: if this formulation already produced its final results, don't redo it.
+    final_json = os.path.join(out_dir, f"expost_oos_{model}_key_results.json")
+    if os.path.exists(final_json):
+        with open(final_json) as f:
+            results_dict = json.load(f)
+        print(f"  [OOS] {model}: already complete, skipping (found {os.path.basename(final_json)}).", flush=True)
+        return {"scenario": scenario_index, "model": model, **results_dict}
 
     key_results = expost_analysis.load_key_results(source_index, model)
     if key_results is None:
-        print(f"  [OOS] skipping {model}: no key results.")
+        print(f"  [OOS] skipping {model}: no key results.", flush=True)
         return None
 
     investment = {"HP1": key_results["HP_Investment_HP1"], "HP2": key_results["HP_Investment_HP2"]}
-    print(f"  [OOS] {model}: fixed investment HP1={investment['HP1']:.2f} kW, "
-          f"HP2={investment['HP2']:.2f} kW over {len(df_hd_full)} steps.")
+    n_steps = len(df_hd_full)
+    total_chunks = -(-n_steps // chunk_steps)
+    resume_note = " (resuming from checkpoint)" if os.path.exists(
+        os.path.join(out_dir, f".oos_ckpt_{model}_state.json")) else ""
+    print(f"  [OOS] START {model}: invest HP1={investment['HP1']:.2f} / HP2={investment['HP2']:.2f} kW | "
+          f"{n_steps} steps -> {total_chunks} chunks of {chunk_steps} (+{overlap_steps} look-ahead){resume_note}",
+          flush=True)
 
+    t_start = time.time()
     results_dict, df_ts = solve_oos_full_series(
         scenario_params, df_hd_full, df_ep_full, df_cop_full,
         investment, chunk_steps=chunk_steps, overlap_steps=overlap_steps,
         initial_storage=initial_storage, mipgap=mipgap, threads=threads,
+        time_limit=time_limit, checkpoint_prefix=os.path.join(out_dir, f".oos_ckpt_{model}"),
         label=f"[{model}] ",
     )
+    wall = time.time() - t_start
 
     df_ts.to_excel(os.path.join(out_dir, f"expost_oos_{model}_results.xlsx"))
     with open(os.path.join(out_dir, f"expost_oos_{model}_key_results.json"), "w") as f:
         json.dump(results_dict, f, indent=4)
 
-    print(f"  [OOS] {model}: TotalCost_ex_post = {results_dict['TotalCost_ex_post']:.2f}")
+    print(f"  [OOS] DONE  {model}: TotalCost_ex_post = {results_dict['TotalCost_ex_post']:,.2f} | "
+          f"{results_dict['n_chunks']} chunks in {_fmt_dur(wall)} | "
+          f"HNS {results_dict['Heat_Not_Supplied_Total']:.1f} kWh, "
+          f"excess {results_dict['Excess_Heat_Supplied_Total']:.1f} kWh", flush=True)
     return {"scenario": scenario_index, "model": model, **results_dict}
 
 
@@ -471,6 +581,7 @@ def run_oos_expost_analysis(
     overlap_steps=96,
     initial_storage=0.0,
     mipgap=1e-4,  # Gurobi default; ex-post is the validation reference, keep it tight
+    time_limit=900,
     n_jobs=None,
     threads_per_job=None,
     source_index=None,
@@ -499,20 +610,32 @@ def run_oos_expost_analysis(
     os.makedirs(out_dir, exist_ok=True)
 
     n_cpu = os.cpu_count() or 1
+    # Fewer, beefier jobs by default: the slow two-heat-pump formulations dominate wall-time, so give
+    # each Gurobi solve more threads rather than splitting the machine evenly over all 5 (LP/UC finish
+    # fast and would leave their cores idle). Formulations queue and run as slots free up.
     if n_jobs is None:
-        n_jobs = min(len(models), n_cpu)
+        n_jobs = min(3, len(models))
     n_jobs = max(1, min(n_jobs, len(models)))
     if threads_per_job is None:
         threads_per_job = max(1, n_cpu // n_jobs) if n_jobs > 1 else None
 
+    # Dispatch hardest-first so the bottleneck (balanced two-unit splits) grabs the first, best-resourced
+    # slots instead of waiting behind the trivial single-unit LP/UC solves.
+    _difficulty = {"PWLR": 0, "CR": 1, "PWL": 2, "UC": 3, "LP": 4}
+    ordered = sorted(models, key=lambda m: _difficulty.get(m, 2))
+
     tasks = [
         (model, scenario_index, scenario_params, df_hd_full, df_ep_full, df_cop_full,
-         out_dir, chunk_steps, overlap_steps, initial_storage, mipgap, threads_per_job, source_index)
-        for model in models
+         out_dir, chunk_steps, overlap_steps, initial_storage, mipgap, threads_per_job, source_index,
+         time_limit)
+        for model in ordered
     ]
 
-    print(f"  [OOS] scenario {scenario_index}: {len(tasks)} formulations, "
-          f"n_jobs={n_jobs}, threads/job={threads_per_job}, chunk_steps={chunk_steps}, mipgap={mipgap}")
+    total_chunks = -(-len(df_hd_full) // chunk_steps)
+    print(f"  [OOS] scenario {scenario_index}: {len(tasks)} formulations [{', '.join(ordered)}], "
+          f"{len(df_hd_full)} steps -> {total_chunks} chunks/formulation | "
+          f"n_jobs={n_jobs}, threads/job={threads_per_job}, chunk_steps={chunk_steps}, "
+          f"mipgap={mipgap}, time_limit={time_limit}s", flush=True)
 
     if n_jobs > 1:
         with ProcessPoolExecutor(max_workers=n_jobs) as executor:
@@ -530,14 +653,30 @@ def run_oos_for_all_scenarios(
     output_path="results/All_KPI_Results_OOS.xlsx",
     **kwargs,
 ):
-    """Run the OOS analysis for every scenario in the scenarios file and aggregate KPIs."""
+    """Run the OOS analysis for every scenario in the scenarios file and aggregate KPIs.
+
+    Reads OOS knobs (chunk_steps, overlap_steps, mipgap, time_limit, n_jobs) from
+    parameter.yaml so this standalone entry point behaves like the main pipeline;
+    anything passed explicitly via kwargs still wins.
+    """
     scenarios = data.load_input_scenarios(scenarios_path)
     model_data = data.load_data(data_path)
+
+    gp = data.load_parameter()
+    yaml_defaults = {
+        "chunk_steps": gp.get("oos_chunk_steps", 672),
+        "overlap_steps": gp.get("oos_overlap_steps", 96),
+        "mipgap": gp.get("oos_mipgap", 1e-4),
+        "time_limit": gp.get("oos_chunk_time_limit", 900),
+        "n_jobs": gp.get("oos_n_jobs", None),
+    }
+    for k, v in yaml_defaults.items():
+        kwargs.setdefault(k, v)
 
     all_rows = []
     for _, scenario in scenarios.iterrows():
         params = scenario.to_dict()
-        print(f"\n=== OOS ex-post for scenario {params['ScenarioIndex']} ===")
+        print(f"\n=== OOS ex-post for scenario {params['ScenarioIndex']} ===", flush=True)
         df_kpi = run_oos_expost_analysis(
             params["ScenarioIndex"], params, model_data, **kwargs,
         )
@@ -545,7 +684,7 @@ def run_oos_for_all_scenarios(
 
     final_df = pd.concat(all_rows, ignore_index=True)
     final_df.to_excel(output_path, index=False)
-    print(f"\nAggregated OOS KPIs written to {output_path}")
+    print(f"\nAggregated OOS KPIs written to {output_path}", flush=True)
     return final_df
 
 
