@@ -6,9 +6,21 @@ num_rep_periods: 7
 hours_per_period: 48
 constraint_binding_tolerance: 0.001
 
+# Gurobi threads per solve. null -> Gurobi default (grabs ALL cores). Set this when
+# running several model instances in parallel on one machine: pick floor(physical_cores /
+# n_parallel_instances) so total threads stay <= physical cores and the instances don't
+# oversubscribe cores / thrash memory bandwidth. Applies to the main investment solve;
+# the OOS step manages its own threads via oos_n_jobs.
+solver_threads: null
+
+# NOTE: the number of PWL/PWLR fit segments is set PER SCENARIO via the "n_fit_segments"
+# column in inputScenarios.xlsx (easier for sensitivity sweeps). If a scenario leaves it
+# blank the code falls back to 4. LP/UC/CR are segment-independent and ignore it.
+
 # Out-of-sample (OOS) ex-post analysis (full-resolution chronological re-dispatch of each fixed investment)
 run_oos_analysis: true      # master switch: set to false to skip the OOS step entirely
 oos_chunk_steps: 672        # committed steps per rolling-horizon chunk (672 = 1 week at 15-min resolution)
 oos_overlap_steps: 96       # look-ahead steps solved but not committed (96 = 1 day)
 oos_mipgap: 0.0001          # solver MIP gap for the OOS operational model (Gurobi default; keep tight)
-oos_n_jobs: null            # parallel formulations; null -> auto (one process per formulation, capped at CPU count)
+oos_chunk_time_limit: 900   # per-chunk Gurobi TimeLimit (s) safety net: generous so it normally never bites, only caps a pathological chunk to prevent a hang
+oos_n_jobs: null            # parallel formulations; null -> auto (fewer, beefier jobs so the slow formulations get more threads)
