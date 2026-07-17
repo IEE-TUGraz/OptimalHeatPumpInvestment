@@ -3,6 +3,7 @@ import pyomo.environ as pyo
 import os
 import data
 import Core_model
+import segment_fit
 
 def solve_PWLR_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp_weight, df_warmstart, LP_results):
     global_param = data.load_parameter()
@@ -13,7 +14,6 @@ def solve_PWLR_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_r
 
     # --- Sets ---
     Core_model.initialise_sets(model, df_heat_demand)
-    model.s = pyo.Set(initialize=['s1', 's2', 's3', 's4'])  # segments for piecewise linear COP
 
     # --- Parameters ---
     # vectors
@@ -25,8 +25,11 @@ def solve_PWLR_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_r
 
     model.MinPLR = pyo.Param(initialize=parameter["MinPartLoad"])  # minimum part load ratio
 
-    # for piecewise linear COP, define breakpoints and slopes
-    Core_model.initialise_piecewise_linear_parameters(model)
+    # piecewise linear COP: secant fit with n_fit_segments segments (scenario param, default 4)
+    n_seg = segment_fit.resolve_n_segments(parameter, global_param)
+    fit = segment_fit.fit_cop_segments(n_seg)
+    print(f"[PWLR] piecewise-linear COP fit: {n_seg} secant segment(s).")
+    Core_model.initialise_piecewise_linear_parameters(model, fit)
 
     # --- Variables ---
     Core_model.initialise_variables(model)
@@ -82,7 +85,8 @@ def solve_PWLR_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_r
         Core_model.add_startup_formulation(model)
 
     if str(parameter["LinearUnderestimator"]).strip().lower() == "true":
-        Core_model.add_linear_underestimator(model, K_lu=3.648000000000001, D_lu=0.11448333333333338, D_offset=0.00)  # for datasheet model
+        # tightest global underestimator of the same n-segment secant fit (kept consistent with n_fit_segments)
+        Core_model.add_linear_underestimator(model, K_lu=fit["K_lu"], D_lu=fit["D_lu"], D_offset=0.00)
 
     Core_model.add_investment_formulation(model)
 

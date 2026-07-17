@@ -224,29 +224,22 @@ def store_warmstart_data(model):
     return df_warmstart
 
 
-def initialise_piecewise_linear_parameters(model):
+def initialise_piecewise_linear_parameters(model, fit):
+    """
+    Build the segment set and piecewise-linear COP parameters from a `fit` dict
+    produced by `segment_fit.fit_cop_segments(n)`. The number of segments is
+    whatever the fit contains, so PWL/PWLR scale with `n_fit_segments`.
+    """
+    model.s = pyo.Set(initialize=fit["segments"])  # segments for piecewise linear COP
     model.z_PL = pyo.Var(model.rp, model.h, model.s, model.hps, within=pyo.Binary)  # segment selection variable
     model.d_scaled_pos = pyo.Var(model.rp, model.h, model.s, model.hps, within=pyo.NonNegativeReals)
     model.d_scaled_neg = pyo.Var(model.rp, model.h, model.s, model.hps, within=pyo.NonNegativeReals)
-    # 0.25 PLR - not updated yet
-    #model.K = pyo.Param(model.s, initialize={'s1': 5.819548872180451, 's2': 5.348837209302325, 's3': 4.767441860465116, 's4': 3.953488372093023})  # segment slope
-    #model.D_pos = pyo.Param(model.s, initialize={'s1': 0, 's2': 0, 's3': 0, 's4': 0.062935905633207})
-    #model.D_neg = pyo.Param(model.s, initialize={'s1': 0.4646009714531245, 's2': 0.42549508089773996, 's3': 0.26669910429670696, 's4': 0})
-    #model.RMin = pyo.Param(model.s, initialize={'s1': 0.55, 's2': 0.6625000000000001, 's3': 0.775, 's4': 0.8875})  # segment minimum PLR
-    #model.RMax = pyo.Param(model.s, initialize={'s1': 0.6625000000000001, 's2': 0.775, 's3': 0.8875, 's4': 1.0})  # segment maximum PLR
 
-    model.K = pyo.Param(model.s, initialize={'s1': 3.6685, 's2': 3.6800000000000037, 's3': 3.6800000000000037, 's4': 3.648000000000001})  # segment slope
-    model.D_pos = pyo.Param(model.s, initialize={'s1': 0, 's2': 0, 's3': 0, 's4': 0})
-    model.D_neg = pyo.Param(model.s, initialize={'s1': 0.11653333333333327, 's2': 0.11200000000000195, 's3': 0.11340000000000242, 's4': 0.08746666666666728})
-    model.RMin = pyo.Param(model.s, initialize={'s1': 0.1, 's2': 0.325, 's3': 0.55, 's4': 0.775})  # segment minimum PLR
-    model.RMax = pyo.Param(model.s, initialize={'s1': 0.325, 's2': 0.55, 's3': 0.775, 's4': 1.0})  # segment maximum PLR
-
-    # 0.55 PLR
-    #model.K = pyo.Param(model.s, initialize={'s1': 4.273207427813483, 's2': 4.215739077645132, 's3': 4.011641097847147, 's4': 3.640790562187536})  # segment slope
-    #model.D_pos = pyo.Param(model.s, initialize={'s1': 0, 's2': 0, 's3': 0, 's4': 0.062935905633207})
-    #model.D_neg = pyo.Param(model.s, initialize={'s1': 0.4646009714531245, 's2': 0.42549508089773996, 's3': 0.26669910429670696, 's4': 0})
-    #model.RMin = pyo.Param(model.s, initialize={'s1': 0.55, 's2': 0.6625000000000001, 's3': 0.775, 's4': 0.8875})  # segment minimum PLR
-    #model.RMax = pyo.Param(model.s, initialize={'s1': 0.6625000000000001, 's2': 0.775, 's3': 0.8875, 's4': 1.0})  # segment maximum PLR
+    model.K = pyo.Param(model.s, initialize=fit["K"])          # segment slope
+    model.D_pos = pyo.Param(model.s, initialize=fit["D_pos"])  # positive intercept part
+    model.D_neg = pyo.Param(model.s, initialize=fit["D_neg"])  # negative intercept part
+    model.RMin = pyo.Param(model.s, initialize=fit["RMin"])    # segment minimum PLR
+    model.RMax = pyo.Param(model.s, initialize=fit["RMax"])    # segment maximum PLR
     return model
 
 def add_linear_underestimator(model, K_lu, D_lu, D_offset=0.0):
@@ -288,6 +281,9 @@ def perform_simple_solve(model, parameter, global_param):
     solver.set_instance(model)
     solver.options["MIPGap"] = 1e-4  # ex-post is the validation reference -> keep tight (Gurobi default), not the 1% used for investment
     #solver.options["TimeLimit"] = global_param["solver_time_limit"]
+    threads = global_param.get("solver_threads")
+    if threads is not None:
+        solver.options["Threads"] = threads  # cap cores per solve to avoid oversubscription when instances run in parallel
     results = solver.solve(model, tee=False, warmstart=True)
     solve_work = solver._solver_model.Work
     return solve_work, 1
@@ -369,6 +365,9 @@ def perform_iterative_solve_2(model, parameter, global_param):
     solver.set_instance(model)
     solver.options["MIPGap"] = parameter["MIPGap"]
     solver.options["TimeLimit"] = global_param["solver_time_limit"]
+    threads = global_param.get("solver_threads")
+    if threads is not None:
+        solver.options["Threads"] = threads  # cap cores per solve to avoid oversubscription when instances run in parallel
 
     sum_work_time = 0
 

@@ -46,6 +46,9 @@ def solve_LP_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rpW
     solver = pyo.SolverFactory('gurobi_persistent')
     solver.set_instance(model)
     #solver.options["MIPGap"] = parameter["MIPGap"]
+    threads = global_param.get("solver_threads")
+    if threads is not None:
+        solver.options["Threads"] = threads  # cap cores per solve to avoid oversubscription when instances run in parallel
     results = solver.solve(tee=True)
     work_time = solver._solver_model.Work
 

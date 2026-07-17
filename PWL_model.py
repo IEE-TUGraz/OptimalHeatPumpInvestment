@@ -3,6 +3,7 @@ import pyomo.environ as pyo
 import os
 import data
 import Core_model
+import segment_fit
 
 def solve_PWL_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp_weights, df_warmstart, LP_results):
     global_param = data.load_parameter()
@@ -12,7 +13,6 @@ def solve_PWL_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp
 
     # --- Sets ---
     Core_model.initialise_sets(model, df_heat_demand)
-    model.s = pyo.Set(initialize=['s1', 's2', 's3', 's4'])  # segments for piecewise linear COP
 
     # --- Parameters ---
     # vectors
@@ -24,8 +24,11 @@ def solve_PWL_model(parameter, df_heat_demand, df_el_price, df_cop_scalor, df_rp
 
     model.MinPLR = pyo.Param(initialize=parameter["MinPartLoad"])  # minimum part load ratio
 
-    # for piecewise linear COP, define breakpoints and slopes
-    Core_model.initialise_piecewise_linear_parameters(model)
+    # piecewise linear COP: secant fit with n_fit_segments segments (scenario param, default 4)
+    n_seg = segment_fit.resolve_n_segments(parameter, global_param)
+    fit = segment_fit.fit_cop_segments(n_seg)
+    print(f"[PWL] piecewise-linear COP fit: {n_seg} secant segment(s).")
+    Core_model.initialise_piecewise_linear_parameters(model, fit)
 
     # --- Variables ---
     Core_model.initialise_variables(model)
